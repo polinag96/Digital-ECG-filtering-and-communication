@@ -2,41 +2,45 @@
 int ECGsample;
 int check;
 int heartBeat=0;
+double HR = 45;
 int filteredECG=0;
 int temp=0;
-double rPeaks=0;
-double tInt=0;
+int timer=0;
+//HR variables
+int cPeaks=0;
 //Low pass variables
-double prevECG[4]={0,0,0,0,0};
+double prevECG[4]={0,0,0,0};
 int outECGlp=0;
-//high pass
+//High pass
 double xECGValues[4] = {0,0,0,0};
 double yECGValues[4] = {0,0,0,0};
 int outECG=0;
 
-void highPassFilter(long ECGcIn){
+void highPassFilter(long ECGcIn){ // 3rd order IIR high
     unsigned int i;
-    for(i=0;i<3;i++){
+    for(i=0;i<4;i++){
         xECGValues[i]=xECGValues[i+1];
         yECGValues[i]=yECGValues[i+1];
     }
+    yECGValues[3]=0;
     xECGValues[3]=ECGcIn;
-    yECGValues[3]=((xECGValues[0]*(-0.9710))+(xECGValues[1]*2.9130)+(xECGValues[2]*(-2.9130))+(xECGValues[3]*0.9710))-((yECGValues[0]*(-0.9423))+(yECGValues[1]*2.8840)+(yECGValues[2]*(-2.9417)));
-    tInt++;
-    if ((yECGValues[3] > yECGValues[2]) && (yECGValues[3] > 1.5)){
-       rPeaks++;
+    yECGValues[3]=((xECGValues[0]*(-0.9710037))+(xECGValues[1]*2.9129527)+(xECGValues[2]*(-2.9129527))+(xECGValues[3]*0.9710037))-((yECGValues[0]*(-0.9422915))+(yECGValues[1]*2.8839657)+(yECGValues[2]*(-2.9416556)));
+    if ((yECGValues[2] > yECGValues[3]) && (yECGValues[2] > yECGValues[1]) && (yECGValues[2] > 85)){
+       HR = ((180*60)/cPeaks)+0.50;
+       cPeaks=0;
     }
-    heartBeat = rPeaks/tInt;
+    cPeaks++;
+    heartBeat = (int)HR;
     outECG=(int)yECGValues[3];
 }
-void lowPassFilter(long ECGIn){
+void lowPassFilter(long ECGIn){ // 3rd order FIR low
     unsigned int i;
-    for(i=0;i<3;i++){
+    for(i=0;i<4;i++){
         prevECG[i]=prevECG[i+1];
     }
     prevECG[3]=ECGIn;
-    outECGlp = 0.17350*prevECG[0]+0.32649*prevECG[1]+0.32649*prevECG[2]+0.17350*prevECG[3];
-    outECGlp=(int)outECGlp;
+    outECGlp = 0;
+    outECGlp = 0.1735037*prevECG[0]+0.3264962*prevECG[1]+0.3264962*prevECG[2]+0.1735037*prevECG[3];
 }
 
 int main(void)
@@ -65,19 +69,19 @@ int main(void)
     while(1){
         __bis_SR_register(LPM0_bits + GIE);  // Enter LPM0, interrupts enabled
         if (check == 0){
-            temp = UCA0RXBUF;            // LSB
+            temp = UCA0RXBUF;                // LSB
         }
         __bis_SR_register(LPM0_bits + GIE);  // Enter LPM0, interrupts enabled
         if (check == 1) {
-            ECGsample = UCA0RXBUF; // MSB
+            ECGsample = UCA0RXBUF;      // MSB
             ECGsample = ECGsample << 8; // shift MSB to left
             ECGsample |= temp;          // new = MSB + LSB
             TA0CTL |= MC_2;             // start timer
+            TAR=0;
             lowPassFilter(ECGsample);
-            highPassFilter(outECGlp);
-            TA0CTL |= MC_0;             // end timer
-
-            filteredECG = (int) outECG;
+            highPassFilter(outECGlp);   // end timer
+            timer=TAR;
+            filteredECG=outECG;
             while (!(IFG2 & UCA0TXIFG));                // USCI_A0 TX buffer ready?
             UCA0TXBUF = filteredECG;                    // send LSB
             filteredECG = filteredECG >> 8;             // send MSB
@@ -85,12 +89,11 @@ int main(void)
             UCA0TXBUF = filteredECG;
 
             while (!(IFG2 & UCA0TXIFG));                // USCI_A0 TX buffer ready?
-            UCA0TXBUF = TAR;                            // send LSB
-            TAR = TAR >> 8;                             // send MSB
+            UCA0TXBUF = timer;                            // send LSB
+            timer = timer >> 8;                             // send MSB
             while (!(IFG2 & UCA0TXIFG));                // USCI_A0 TX buffer ready?
-            UCA0TXBUF = TAR;
+            UCA0TXBUF = timer;
 
-            heartBeat = (int) heartBeat;
             while (!(IFG2 & UCA0TXIFG));                // USCI_A0 TX buffer ready?
             UCA0TXBUF = heartBeat;                      // send LSB
             heartBeat = heartBeat >> 8;                 // send MSB
@@ -119,4 +122,3 @@ __interrupt void USCI0RX_ISR(void){
         __bic_SR_register_on_exit(LPM0_bits + GIE);
     }
 }
-
